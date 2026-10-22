@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>HDRI Creator</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%23f5b342'/><path d='M3 16h26' stroke='%23111' stroke-width='2'/></svg>" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>HDRI Creator</h1>
+      <p class="sub">Fusion de bracketings en HDRI 32 bits — traitement 100 % local, aucune photo n'est envoyée.</p>
+    </header>
+
+    <main>
+      <section class="panel" id="import">
+        <h2><span class="step">1</span>Photos</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="files" multiple accept="image/jpeg,image/png,image/webp,image/avif,image/heic,.jpg,.jpeg,.png,.webp,.heic,.avif" />
+          <strong>Déposez vos photos ici</strong>
+          <span>ou cliquez pour choisir — JPEG conseillé (EXIF lu automatiquement)</span>
+        </label>
+        <div class="row">
+          <label>Regroupement
+            <select id="groupMode">
+              <option value="auto">Auto (d'après l'EXIF)</option>
+              <option value="fixed">Par paquets de N</option>
+              <option value="single">Un seul HDRI</option>
+            </select>
+          </label>
+          <label id="groupSizeWrap" hidden>N photos / bracketing <input type="number" id="groupSize" min="1" max="15" value="3" /></label>
+          <label>Écart EV par défaut (sans EXIF) <input type="number" id="evStep" min="0.3" max="4" step="0.1" value="2" /></label>
+          <button class="ghost" id="clear" type="button">Tout effacer</button>
+        </div>
+      </section>
+
+      <section class="panel" id="settingsPanel">
+        <h2><span class="step">2</span>Réglages</h2>
+        <div class="grid">
+          <label>Type de prise de vue
+            <select id="projection">
+              <option value="equirect">Caméra 360° (équirectangulaire)</option>
+              <option value="mirrorball">Boule miroir (chrome ball)</option>
+              <option value="plain">Photo classique / à assembler ensuite</option>
+            </select>
+          </label>
+          <label>Résolution de sortie
+            <select id="outputWidth">
+              <option value="1024">1K (1024 px)</option>
+              <option value="2048">2K (2048 px)</option>
+              <option value="4096" selected>4K (4096 px)</option>
+              <option value="8192">8K (8192 px) — gourmand en mémoire</option>
+            </select>
+          </label>
+          <label>Courbe de réponse
+            <select id="crf">
+              <option value="auto">Estimée (Debevec)</option>
+              <option value="srgb">sRGB standard</option>
+            </select>
+          </label>
+          <label>Rotation horizontale <span class="val" id="yawVal">0°</span>
+            <input type="range" id="yaw" min="-180" max="180" step="1" value="0" />
+          </label>
+          <label class="check"><input type="checkbox" id="align" checked /> Alignement automatique (prise à main levée)</label>
+          <label class="check"><input type="checkbox" id="deghost" /> Anti-fantômes (éléments en mouvement)</label>
+          <label class="check"><input type="checkbox" id="normalize" checked /> Normaliser l'exposition (gris moyen 18 %)</label>
+          <fieldset class="formats">
+            <legend>Formats</legend>
+            <label class="check"><input type="checkbox" id="fmtHdr" checked /> .hdr</label>
+            <label class="check"><input type="checkbox" id="fmtExr" checked /> .exr</label>
+            <label class="check"><input type="checkbox" id="fmtJpg" checked /> aperçu .jpg</label>
+          </fieldset>
+        </div>
+        <div id="ballEditor" hidden>
+          <p class="hint">Placez le cercle sur la boule : glissez pour déplacer, molette ou curseur pour le rayon.</p>
+          <div class="ball-wrap">
+            <div class="ball-stage" id="ballStage"><img id="ballImg" alt="" /><div class="ball-circle" id="ballCircle"></div></div>
+            <div class="ball-controls">
+              <label>Centre X <input type="range" id="ballCx" min="0" max="1" step="0.001" value="0.5" /></label>
+              <label>Centre Y <input type="range" id="ballCy" min="0" max="1" step="0.001" value="0.5" /></label>
+              <label>Rayon <input type="range" id="ballR" min="0.05" max="0.75" step="0.001" value="0.5" /></label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="groupsPanel">
+        <div class="head">
+          <h2><span class="step">3</span>Bracketings <span class="count" id="groupCount"></span></h2>
+          <div class="actions">
+            <button id="runAll" type="button" disabled>Générer tout</button>
+            <button class="ghost" id="zipAll" type="button" disabled>Tout télécharger (.zip)</button>
+          </div>
+        </div>
+        <div id="groups"><p class="empty">Aucune photo pour l'instant.</p></div>
+      </section>
+    </main>
+
+    <dialog id="viewer">
+      <canvas id="viewerCanvas"></canvas>
+      <div class="viewer-bar">
+        <span id="viewerTitle"></span>
+        <label>Exposition <input type="range" id="viewerEv" min="-8" max="8" step="0.1" value="0" /></label>
+        <button type="button" id="viewerClose">Fermer</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
