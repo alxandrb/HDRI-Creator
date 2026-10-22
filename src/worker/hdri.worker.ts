@@ -1,4 +1,5 @@
 import { runPipeline, type ImageIO } from '../core/pipeline';
+import { runStitchPipeline } from '../core/stitch/pipeline';
 import type { JobRequest, WorkerOutMsg } from '../core/types';
 
 const post = (msg: WorkerOutMsg, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(msg, transfer);
@@ -32,7 +33,8 @@ const io: ImageIO = {
 self.onmessage = async (e: MessageEvent<JobRequest>) => {
   const req = e.data;
   try {
-    const result = await runPipeline(req, io, (stage, progress) => post({ type: 'progress', id: req.id, stage, progress }));
+    const run = req.settings.projection === 'stitch' ? runStitchPipeline : runPipeline;
+    const result = await run(req, io, (stage, progress) => post({ type: 'progress', id: req.id, stage, progress }));
     post({ type: 'done', id: req.id, result }, [result.preview.data.buffer]);
   } catch (err) {
     post({ type: 'error', id: req.id, message: err instanceof Error ? err.message : String(err) });

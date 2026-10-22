@@ -90,19 +90,7 @@ export async function runPipeline(req: JobRequest, io: ImageIO, progress: Progre
   }
   let rgb = merger.finish();
 
-  if (s.normalize) {
-    let sum = 0;
-    let count = 0;
-    const step = Math.max(1, Math.floor((ww * wh) / 200000));
-    for (let p = 0; p < ww * wh; p += step) {
-      const l = luminance(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2]);
-      if (l > 0) { sum += Math.log(l); count++; }
-    }
-    if (count) {
-      const k = 0.18 / Math.exp(sum / count);
-      for (let i = 0; i < rgb.length; i++) rgb[i] *= k;
-    }
-  }
+  if (s.normalize) normalizeExposure(rgb, ww * wh);
 
   progress('Projection', 0.82);
   let ow = ww;
@@ -117,6 +105,34 @@ export async function runPipeline(req: JobRequest, io: ImageIO, progress: Progre
     rgb = mirrorBallToEquirect(rgb, ww, wh, ow, oh, s.yaw);
   }
 
+  return finalizeOutputs(req, io, progress, rgb, ow, oh, { shifts, crf: crfKind, durationMs: performance.now() - t0 });
+}
+
+/** Ramène la moyenne logarithmique de la luminance à un gris moyen de 18 %. */
+export function normalizeExposure(rgb: Float32Array, pixels: number): void {
+  let sum = 0;
+  let count = 0;
+  const step = Math.max(1, Math.floor(pixels / 200000));
+  for (let p = 0; p < pixels; p += step) {
+    const l = luminance(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2]);
+    if (l > 0) { sum += Math.log(l); count++; }
+  }
+  if (!count) return;
+  const k = 0.18 / Math.exp(sum / count);
+  for (let i = 0; i < pixels * 3; i++) rgb[i] *= k;
+}
+
+/** Statistiques, encodage des fichiers et aperçu, communs à tous les modes. */
+export async function finalizeOutputs(
+  req: JobRequest,
+  io: ImageIO,
+  progress: Progress,
+  rgb: Float32Array,
+  ow: number,
+  oh: number,
+  info: Omit<JobResult['info'], 'peak' | 'dynamicRangeEv'>,
+): Promise<JobResult> {
+  const s = req.settings;
   let peak = 0;
   let floor = Infinity;
   for (let p = 0; p < ow * oh; p++) {
@@ -144,12 +160,6 @@ export async function runPipeline(req: JobRequest, io: ImageIO, progress: Progre
     height: oh,
     files,
     preview: { width: pw, height: ph, data: preview },
-    info: {
-      shifts,
-      crf: crfKind,
-      peak,
-      dynamicRangeEv: Number.isFinite(floor) && peak > 0 ? Math.log2(peak / floor) : 0,
-      durationMs: performance.now() - t0,
-    },
+    info: { ...info, peak, dynamicRangeEv: Number.isFinite(floor) && peak > 0 ? Math.log2(peak / floor) : 0 },
   };
 }

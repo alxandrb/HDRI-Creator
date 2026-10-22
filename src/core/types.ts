@@ -1,4 +1,4 @@
-export type Projection = 'equirect' | 'mirrorball' | 'plain';
+export type Projection = 'equirect' | 'mirrorball' | 'plain' | 'stitch';
 
 export interface BallCircle {
   /** Centre X, fraction de la largeur de l'image source. */
@@ -20,6 +20,10 @@ export interface Settings {
   /** Rotation horizontale en degrés. */
   yaw: number;
   ball: BallCircle;
+  /** Assemblage : champ de vision horizontal en degrés si l'EXIF ne le donne pas (0 = estimation auto). */
+  hfov: number;
+  /** Assemblage : égalise la luminosité entre photos voisines. */
+  gainCompensation: boolean;
   formats: { hdr: boolean; exr: boolean; jpg: boolean };
 }
 
@@ -28,6 +32,10 @@ export interface JobImage {
   name: string;
   /** Exposition relative en stops (log2), plus grand = image plus claire. */
   ev: number;
+  /** Assemblage : indice de la direction de prise de vue (un bracketing par direction). */
+  dir?: number;
+  /** Focale équivalent 24×36 lue dans l'EXIF. */
+  focal35?: number;
 }
 
 export interface JobRequest {
@@ -60,6 +68,16 @@ export interface JobResult {
     peak: number;
     dynamicRangeEv: number;
     durationMs: number;
+    stitch?: {
+      directions: number;
+      used: number;
+      hfovDeg: number;
+      focalSource: 'exif' | 'estimée' | 'réglage';
+      coverage: number;
+      rmsErrorPx: number;
+      /** Photos (de référence) qui n'ont pu être reliées à aucune autre. */
+      unplaced: string[];
+    };
   };
 }
 

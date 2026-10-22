@@ -13,6 +13,7 @@ interface Photo {
   name: string;
   exif: ExifData;
   exifEv?: number;
+  focal35?: number;
   time?: string;
   ev: number;
   evEdited: boolean;
@@ -44,6 +45,11 @@ const nextId = () => `id${++uid}`;
 
 let photos: Photo[] = [];
 let groups: Group[] = [];
+/** Mode assemblage : une seule panorama, chaque groupe est une direction. */
+let pano: Group | null = null;
+
+const isStitch = () => $<HTMLSelectElement>('projection').value === 'stitch';
+const findGroup = (id?: string) => (pano && pano.id === id ? pano : groups.find((g) => g.id === id));
 
 const pool = new WorkerPool(() => {
   const cores = navigator.hardwareConcurrency || 4;
@@ -84,6 +90,7 @@ async function loadPhoto(file: File): Promise<Photo | null> {
       name: file.name,
       exif,
       exifEv: exposureEv(exif),
+      focal35: exif.focalLength35,
       time: exif.dateTimeOriginal ? `${exif.dateTimeOriginal}.${(exif.subSec ?? '').padStart(3, '0')}` : undefined,
       ev: 0,
       evEdited: false,
@@ -104,14 +111,29 @@ function regroup() {
   const mode = $<HTMLSelectElement>('groupMode').value as GroupMode;
   const size = Number($<HTMLInputElement>('groupSize').value) || 3;
   const prev = new Map(groups.map((g) => [g.photos.map((p) => p.id).join(), g]));
-  groups = groupPhotos(photos, mode, size).map((ps) => {
+  const stitchSingles = isStitch() && mode !== 'fixed' && (mode === 'single' || photos.some((p) => p.exifEv === undefined));
+  const sets = stitchSingles ? photos.map((p) => [p]) : groupPhotos(photos, mode, size);
+  groups = sets.map((ps) => {
     const kept = prev.get(ps.map((p) => p.id).join());
     if (kept) return kept;
     return { id: nextId(), name: groupName(ps), photos: ps, status: 'idle', stage: '', progress: 0, urls: [], previewEv: 0, evAnchor: 0 } as Group;
   });
   for (const [key, g] of prev) if (!groups.some((x) => x.photos.map((p) => p.id).join() === key)) revoke(g);
+  const dirKey = groups.map((g) => g.photos.map((p) => p.id).join()).join('|');
+  if (!photos.length) {
+    if (pano) revoke(pano);
+    pano = null;
+  } else if (!pano || pano.name !== dirKey) {
+    if (pano) revoke(pano);
+    pano = { id: 'pano', name: dirKey, photos: [...photos], status: 'idle', stage: '', progress: 0, urls: [], previewEv: 0, evAnchor: 0 };
+  }
   assignEv();
   render();
+}
+
+function panoTitle() {
+  const base = groups[0]?.photos[0]?.name.replace(/\.[^.]+$/, '') ?? 'panorama';
+  return `${base}_pano`;
 }
 
 function groupName(ps: Photo[]) {
@@ -153,6 +175,8 @@ function readSettings(): Settings {
     normalize: chk('normalize'),
     yaw: num('yaw'),
     ball: { cx: num('ballCx'), cy: num('ballCy'), r: num('ballR') },
+    hfov: num('hfov'),
+    gainCompensation: chk('gainCompensation'),
     formats: { hdr: chk('fmtHdr'), exr: chk('fmtExr'), jpg: chk('fmtJpg') },
   };
 }
@@ -187,6 +211,8 @@ function restoreSettings() {
     set('fmtHdr', s.formats.hdr);
     set('fmtExr', s.formats.exr);
     set('fmtJpg', s.formats.jpg);
+    if (s.hfov !== undefined) set('hfov', s.hfov);
+    if (s.gainCompensation !== undefined) set('gainCompensation', s.gainCompensation);
   } catch { /* réglages corrompus : valeurs par défaut */ }
 }
 
@@ -194,6 +220,7 @@ function updateSettingsUi() {
   const s = readSettings();
   $('yawVal').textContent = `${s.yaw}°`;
   $('ballEditor').hidden = s.projection !== 'mirrorball';
+  document.querySelectorAll<HTMLElement>('.stitch-only').forEach((el) => (el.hidden = s.projection !== 'stitch'));
   $('groupSizeWrap').hidden = $<HTMLSelectElement>('groupMode').value !== 'fixed';
   updateBall();
 }
@@ -239,15 +266,23 @@ function bindBallEditor() {
 function render() {
   const container = $('groups');
   $('groupCount').textContent = groups.length ? `(${groups.length})` : '';
-  $<HTMLButtonElement>('runAll').disabled = !groups.length || groups.some((g) => g.status === 'running' || g.status === 'queued');
-  $<HTMLButtonElement>('zipAll').disabled = !groups.some((g) => g.result);
+  const jobs = isStitch() ? (pano ? [pano] : []) : groups;
+  $<HTMLButtonElement>('runAll').disabled = !jobs.length || jobs.some((g) => g.status === 'running' || g.status === 'queued');
+  $<HTMLButtonElement>('zipAll').disabled = !jobs.some((g) => g.result);
+  $('runAll').textContent = isStitch() ? 'Assembler la panorama' : 'Générer tout';
+  $('groupsTitle').textContent = isStitch() ? 'Directions' : 'Bracketings';
   if (!groups.length) {
     container.innerHTML = '<p class="empty">Aucune photo pour l\'instant.</p>';
     updateBall();
     return;
   }
-  container.innerHTML = groups.map(groupHtml).join('');
-  for (const g of groups) if (g.result) drawPreview(g);
+  if (isStitch() && pano) {
+    container.innerHTML = panoHtml(pano);
+    if (pano.result) drawPreview(pano);
+  } else {
+    container.innerHTML = groups.map(groupHtml).join('');
+    for (const g of groups) if (g.result) drawPreview(g);
+  }
   updateBall();
 }
 
@@ -257,22 +292,9 @@ function groupHtml(g: Group): string {
   const span = Math.max(...g.photos.map((p) => p.ev)) - Math.min(...g.photos.map((p) => p.ev));
   const thumbs = [...g.photos]
     .sort((a, b) => a.ev - b.ev)
-    .map(
-      (p) => `<div class="thumb">
-        <img src="${p.thumbUrl}" alt="" loading="lazy" />
-        <button class="rm" type="button" data-act="remove" data-photo="${p.id}" title="Retirer">×</button>
-        <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
-        <div>${formatExposureTime(p.exif.exposureTime)}${p.exif.fNumber ? ` · f/${p.exif.fNumber}` : ''}${p.exif.iso ? ` · ISO ${p.exif.iso}` : ''}</div>
-        <div class="ev">EV <input type="number" step="0.33" value="${+(p.ev - g.evAnchor).toFixed(2)}" data-act="ev" data-photo="${p.id}" data-group="${g.id}" ${busy ? 'disabled' : ''} /></div>
-      </div>`,
-    )
+    .map((p) => thumbHtml(p, g, busy))
     .join('');
-  const status =
-    g.status === 'error'
-      ? `<div class="status err">Erreur : ${esc(g.error ?? '')}</div>`
-      : busy
-        ? `<div class="progress"><div style="width:${Math.round(g.progress * 100)}%"></div></div><div class="status">${g.status === 'queued' ? 'En attente…' : esc(g.stage)}</div>`
-        : '';
+  const status = statusHtml(g);
   return `<article class="group" data-group="${g.id}">
     <div class="group-head">
       <h3>${esc(g.name)}<span class="meta">${g.photos.length} photo(s) · ${span.toFixed(1)} EV d'écart</span>
@@ -286,6 +308,46 @@ function groupHtml(g: Group): string {
   </article>`;
 }
 
+function panoHtml(pg: Group): string {
+  const busy = pg.status === 'running' || pg.status === 'queued';
+  const bracketed = groups.some((g) => g.photos.length > 1);
+  const allSameEv = new Set(photos.map((p) => p.ev)).size <= 1;
+  const dirs = groups
+    .map((g, k) => `<div class="dir"><div class="dir-label">Direction ${k + 1}${g.photos.length > 1 ? ` · ${g.photos.length} poses` : ''}</div>
+      <div class="dir-thumbs">${[...g.photos].sort((a, b) => a.ev - b.ev).map((p) => thumbHtml(p, g, busy)).join('')}</div></div>`)
+    .join('');
+  return `<article class="group" data-group="${pg.id}">
+    <div class="group-head">
+      <h3>Panorama<span class="meta">${groups.length} direction(s) · ${photos.length} photo(s)</span>
+        ${groups.length < 2 ? '<span class="tag warn">Il faut au moins 2 directions</span>' : ''}
+        ${!bracketed && allSameEv ? '<span class="tag">Exposition unique : les zones très claires (soleil) resteront écrêtées</span>' : ''}</h3>
+      <button type="button" data-act="run" data-group="${pg.id}" ${busy || groups.length < 2 ? 'disabled' : ''}>${pg.result ? 'Réassembler' : 'Assembler'}</button>
+    </div>
+    <div class="dirs">${dirs}</div>
+    ${statusHtml(pg)}
+    ${pg.result ? resultHtml(pg) : ''}
+  </article>`;
+}
+
+function statusHtml(g: Group): string {
+  const busy = g.status === 'running' || g.status === 'queued';
+  return g.status === 'error'
+    ? `<div class="status err">Erreur : ${esc(g.error ?? '')}</div>`
+    : busy
+      ? `<div class="progress"><div style="width:${Math.round(g.progress * 100)}%"></div></div><div class="status">${g.status === 'queued' ? 'En attente…' : esc(g.stage)}</div>`
+      : '';
+}
+
+function thumbHtml(p: Photo, g: Group, busy: boolean): string {
+  return `<div class="thumb">
+        <img src="${p.thumbUrl}" alt="" loading="lazy" />
+        <button class="rm" type="button" data-act="remove" data-photo="${p.id}" title="Retirer">×</button>
+        <div class="name" title="${esc(p.name)}">${esc(p.name)}</div>
+        <div>${formatExposureTime(p.exif.exposureTime)}${p.exif.fNumber ? ` · f/${p.exif.fNumber}` : ''}${p.exif.iso ? ` · ISO ${p.exif.iso}` : ''}</div>
+        <div class="ev">EV <input type="number" step="0.33" value="${+(p.ev - g.evAnchor).toFixed(2)}" data-act="ev" data-photo="${p.id}" data-group="${g.id}" ${busy ? 'disabled' : ''} /></div>
+  </div>`;
+}
+
 function resultHtml(g: Group): string {
   const r = g.result!;
   const links = g.urls.map((u) => `<a href="${u.url}" download="${esc(u.name)}">⬇ ${esc(u.name.split('.').pop()!.toUpperCase())}</a>`).join('');
@@ -296,7 +358,13 @@ function resultHtml(g: Group): string {
         <div>Taille : <b>${r.width} × ${r.height}</b></div>
         <div>Plage dynamique : <b>${r.info.dynamicRangeEv.toFixed(1)} EV</b></div>
         <div>Courbe : <b>${r.info.crf === 'debevec' ? 'estimée (Debevec)' : 'sRGB'}</b></div>
-        <div>Décalages : <b>${r.info.shifts.map(([x, y]) => `${x},${y}`).join(' | ')}</b></div>
+        ${r.info.stitch ? `
+        <div>Photos assemblées : <b>${r.info.stitch.used} / ${r.info.stitch.directions}</b></div>
+        <div>Champ horizontal : <b>${r.info.stitch.hfovDeg.toFixed(1)}° (${r.info.stitch.focalSource})</b></div>
+        <div>Précision : <b>${r.info.stitch.rmsErrorPx.toFixed(2)} px</b></div>
+        <div>Sphère couverte : <b>${Math.round(r.info.stitch.coverage * 100)} %</b></div>
+        ${r.info.stitch.unplaced.length ? `<div class="warn-text">Non placées (pas assez de détails communs) : ${r.info.stitch.unplaced.map(esc).join(', ')}</div>` : ''}` : `
+        <div>Décalages : <b>${r.info.shifts.map(([x, y]) => `${x},${y}`).join(' | ')}</b></div>`}
         <div>Temps : <b>${(r.info.durationMs / 1000).toFixed(1)} s</b></div>
       </div>
       <label>Exposition de l'aperçu <span class="val">${g.previewEv > 0 ? '+' : ''}${g.previewEv} EV</span>
@@ -341,8 +409,11 @@ async function runGroup(g: Group) {
     const result = await pool.run(
       {
         id: g.id,
-        name: g.name,
-        images: g.photos.map((p) => ({ file: p.file, name: p.name, ev: p.ev })),
+        name: g === pano ? panoTitle() : g.name,
+        images:
+          g === pano
+            ? groups.flatMap((dg, dir) => dg.photos.map((p) => ({ file: p.file, name: p.name, ev: p.ev, dir, focal35: p.focal35 })))
+            : g.photos.map((p) => ({ file: p.file, name: p.name, ev: p.ev })),
         settings: readSettings(),
       },
       (stage, progress) => {
@@ -363,7 +434,7 @@ async function runGroup(g: Group) {
 }
 
 async function downloadZip() {
-  const files = groups.flatMap((g) => g.result?.files ?? []);
+  const files = (isStitch() ? (pano ? [pano] : []) : groups).flatMap((g) => g.result?.files ?? []);
   if (!files.length) return;
   const btn = $<HTMLButtonElement>('zipAll');
   btn.disabled = true;
@@ -385,7 +456,7 @@ let viewer: Viewer360 | null = null;
 function openViewer(g: Group) {
   if (!g.result) return;
   const dlg = $<HTMLDialogElement>('viewer');
-  $('viewerTitle').textContent = g.name;
+  $('viewerTitle').textContent = g === pano ? panoTitle() : g.name;
   dlg.showModal();
   try {
     viewer = new Viewer360($<HTMLCanvasElement>('viewerCanvas'));
@@ -425,22 +496,25 @@ function bind() {
   $('clear').addEventListener('click', () => {
     groups.forEach(revoke);
     photos.forEach((p) => URL.revokeObjectURL(p.thumbUrl));
+    if (pano) revoke(pano);
     photos = [];
     groups = [];
+    pano = null;
     render();
   });
 
   $('settingsPanel').addEventListener('input', () => { updateSettingsUi(); saveSettings(); });
+  $('projection').addEventListener('change', regroup);
   bindBallEditor();
 
-  $('runAll').addEventListener('click', () => groups.forEach(runGroup));
+  $('runAll').addEventListener('click', () => (isStitch() ? pano && runGroup(pano) : groups.forEach(runGroup)));
   $('zipAll').addEventListener('click', downloadZip);
 
   const container = $('groups');
   container.addEventListener('click', (e) => {
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
     if (!el) return;
-    const g = groups.find((x) => x.id === el.dataset.group);
+    const g = findGroup(el.dataset.group);
     switch (el.dataset.act) {
       case 'run': if (g) runGroup(g); break;
       case 'view': if (g) openViewer(g); break;
@@ -463,7 +537,7 @@ function bind() {
   container.addEventListener('input', (e) => {
     const el = e.target as HTMLInputElement;
     if (el.dataset.act !== 'previewEv') return;
-    const g = groups.find((x) => x.id === el.dataset.group);
+    const g = findGroup(el.dataset.group);
     if (!g) return;
     g.previewEv = Number(el.value);
     el.parentElement!.querySelector('.val')!.textContent = `${g.previewEv > 0 ? '+' : ''}${g.previewEv} EV`;

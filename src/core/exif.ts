@@ -6,6 +6,8 @@ export interface ExifData {
   dateTimeOriginal?: string;
   subSec?: string;
   model?: string;
+  focalLength?: number;
+  focalLength35?: number;
 }
 
 const TAG_MODEL = 0x0110;
@@ -16,6 +18,8 @@ const TAG_ISO = 0x8827;
 const TAG_DATETIME_ORIGINAL = 0x9003;
 const TAG_EXPOSURE_BIAS = 0x9204;
 const TAG_SUBSEC_ORIGINAL = 0x9291;
+const TAG_FOCAL_LENGTH = 0x920a;
+const TAG_FOCAL_LENGTH_35 = 0xa405;
 
 const TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 };
 
@@ -103,6 +107,8 @@ function readTiff(t: DataView): ExifData {
         case TAG_EXPOSURE_BIAS: out.exposureBias = num(type, off); break;
         case TAG_DATETIME_ORIGINAL: if (type === 2) out.dateTimeOriginal = ascii(off, count); break;
         case TAG_SUBSEC_ORIGINAL: if (type === 2) out.subSec = ascii(off, count); break;
+        case TAG_FOCAL_LENGTH: out.focalLength = num(type, off); break;
+        case TAG_FOCAL_LENGTH_35: out.focalLength35 = num(type, off) || undefined; break;
       }
     });
   }

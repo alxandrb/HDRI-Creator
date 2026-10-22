@@ -40,9 +40,10 @@
         <div class="grid">
           <label>Type de prise de vue
             <select id="projection">
+              <option value="stitch">Photos dans plusieurs directions (assemblage 360°)</option>
               <option value="equirect">Caméra 360° (équirectangulaire)</option>
               <option value="mirrorball">Boule miroir (chrome ball)</option>
-              <option value="plain">Photo classique / à assembler ensuite</option>
+              <option value="plain">Photo classique (sans projection)</option>
             </select>
           </label>
           <label>Résolution de sortie
@@ -65,6 +66,19 @@
           <label class="check"><input type="checkbox" id="align" checked /> Alignement automatique (prise à main levée)</label>
           <label class="check"><input type="checkbox" id="deghost" /> Anti-fantômes (éléments en mouvement)</label>
           <label class="check"><input type="checkbox" id="normalize" checked /> Normaliser l'exposition (gris moyen 18 %)</label>
+          <label class="check stitch-only"><input type="checkbox" id="gainCompensation" checked /> Égaliser la luminosité entre photos</label>
+          <label class="stitch-only">Champ de vision horizontal si l'EXIF ne le donne pas
+            <select id="hfov">
+              <option value="0">Estimation automatique</option>
+              <option value="40">40° (≈ 50 mm)</option>
+              <option value="54">54° (≈ 35 mm)</option>
+              <option value="65">65° (≈ 28 mm)</option>
+              <option value="74">74° (≈ 24 mm)</option>
+              <option value="84">84° (≈ 20 mm)</option>
+              <option value="97">97° (≈ 16 mm)</option>
+              <option value="104">104° (≈ 14 mm)</option>
+            </select>
+          </label>
           <fieldset class="formats">
             <legend>Formats</legend>
             <label class="check"><input type="checkbox" id="fmtHdr" checked /> .hdr</label>
@@ -72,6 +86,7 @@
             <label class="check"><input type="checkbox" id="fmtJpg" checked /> aperçu .jpg</label>
           </fieldset>
         </div>
+        <p class="hint stitch-only" id="stitchHint">Prenez les photos en tournant sur vous-même depuis le même point, avec environ 30 % de recouvrement entre voisines, sans oublier le ciel et le sol. Une direction peut contenir un bracketing : il sera fusionné avant l'assemblage.</p>
         <div id="ballEditor" hidden>
           <p class="hint">Placez le cercle sur la boule : glissez pour déplacer, molette ou curseur pour le rayon.</p>
           <div class="ball-wrap">
@@ -87,7 +102,7 @@
 
       <section class="panel" id="groupsPanel">
         <div class="head">
-          <h2><span class="step">3</span>Bracketings <span class="count" id="groupCount"></span></h2>
+          <h2><span class="step">3</span><span id="groupsTitle">Bracketings</span> <span class="count" id="groupCount"></span></h2>
           <div class="actions">
             <button id="runAll" type="button" disabled>Générer tout</button>
             <button class="ghost" id="zipAll" type="button" disabled>Tout télécharger (.zip)</button>
